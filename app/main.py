@@ -71,6 +71,12 @@ async def webhooks_page(request: Request):
 # HEALTH & MONITORING ENDPOINTS
 # ============================================================================
 
+@app.get("/ping", tags=["Monitoring"])
+def ping():
+    """Simple ping endpoint for basic health check"""
+    return {"status": "ok", "message": "Acme Product Importer is running"}
+
+
 @app.get("/health", tags=["Monitoring"])
 def health_check():
     """
