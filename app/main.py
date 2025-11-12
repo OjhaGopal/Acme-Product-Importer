@@ -28,8 +28,7 @@ from app.schemas import ProductResponse, WebhookResponse
 from app.redis_client import RedisCache
 from app.utils import get_health_status, get_metrics
 
-# Initialize database tables
-Base.metadata.create_all(bind=engine)
+# Database tables will be initialized on first request
 
 # FastAPI application instance
 app = FastAPI(
@@ -43,6 +42,13 @@ app = FastAPI(
 # Static files and templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+
+# Startup event
+@app.on_event("startup")
+async def startup_event():
+    """Application startup tasks"""
+    print("Acme Product Importer starting up...")
+    print("Database tables will be initialized on first access")
 
 
 # ============================================================================
