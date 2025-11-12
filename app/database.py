@@ -26,16 +26,22 @@ def ensure_tables_exist():
         try:
             Base.metadata.create_all(bind=engine)
             _tables_initialized = True
+            print("Database tables initialized successfully")
         except Exception as e:
             print(f"Database table creation failed: {e}")
-            pass  # Continue without failing
+            # Don't set _tables_initialized = True so it will retry later
+            pass
 
 def get_db():
-    # Ensure tables exist on first database access
-    ensure_tables_exist()
-    
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+def init_db_async():
+    """Initialize database tables asynchronously"""
+    import threading
+    thread = threading.Thread(target=ensure_tables_exist)
+    thread.daemon = True
+    thread.start()

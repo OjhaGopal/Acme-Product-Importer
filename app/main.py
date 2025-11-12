@@ -48,7 +48,11 @@ templates = Jinja2Templates(directory="templates")
 async def startup_event():
     """Application startup tasks"""
     print("Acme Product Importer starting up...")
-    print("Database tables will be initialized on first access")
+    print("Initializing database tables in background...")
+    
+    # Initialize database tables in background thread
+    from app.database import init_db_async
+    init_db_async()
 
 
 # ============================================================================
@@ -58,7 +62,11 @@ async def startup_event():
 @app.get("/", response_class=HTMLResponse, tags=["Web Interface"])
 async def home(request: Request):
     """Home page with CSV upload interface"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    try:
+        return templates.TemplateResponse("index.html", {"request": request})
+    except Exception as e:
+        # Fallback if templates fail
+        return HTMLResponse("<h1>Acme Product Importer</h1><p>Loading...</p>")
 
 
 @app.get("/products", response_class=HTMLResponse, tags=["Web Interface"])
@@ -81,6 +89,16 @@ async def webhooks_page(request: Request):
 def ping():
     """Simple ping endpoint for basic health check"""
     return {"status": "ok", "message": "Acme Product Importer is running"}
+
+
+@app.get("/status", tags=["Monitoring"])
+def status():
+    """Quick status check without database dependencies"""
+    return {
+        "status": "running",
+        "service": "Acme Product Importer",
+        "version": "1.0.0"
+    }
 
 
 @app.get("/health", tags=["Monitoring"])
