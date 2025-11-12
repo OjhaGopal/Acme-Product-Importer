@@ -95,11 +95,26 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
 
 
 
+let pollRetryCount = 0;
+const maxRetries = 5;
+
 function pollProgress(taskId) {
     const interval = setInterval(async () => {
         try {
-            const response = await fetch(`/api/task-status/${taskId}`);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+            
+            const response = await fetch(`/api/task-status/${taskId}`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            
             const status = await response.json();
+            pollRetryCount = 0; // Reset retry count on success
 
             if (status.state === 'PROGRESS') {
                 const percent = status.progress_percent || Math.round((status.current / status.total) * 100);
@@ -127,11 +142,19 @@ function pollProgress(taskId) {
                 showResult('warning', 'Upload was cancelled');
             }
         } catch (error) {
-            clearInterval(interval);
-            clearUploadTask();
-            showResult('danger', 'Error checking status: ' + error.message);
+            pollRetryCount++;
+            console.warn(`Poll attempt ${pollRetryCount} failed:`, error.message);
+            
+            if (pollRetryCount >= maxRetries) {
+                clearInterval(interval);
+                clearUploadTask();
+                showResult('danger', 'Connection lost. Upload may still be processing on server.');
+            } else {
+                // Show temporary connection issue message
+                document.getElementById('progressText').textContent = `Connection issue (retry ${pollRetryCount}/${maxRetries})...`;
+            }
         }
-    }, 1000);
+    }, 2000); // Increased to 2 seconds for better stability
 }
 
 function showResult(type, message) {

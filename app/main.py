@@ -315,11 +315,24 @@ def get_task_status(task_id: str):
     STORY 1A: Get real-time progress of CSV processing
     Returns current status, progress, and completion percentage
     """
-    status = RedisCache.get(f"task:{task_id}")
-    if not status:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    return status
+    try:
+        status = RedisCache.get(f"task:{task_id}")
+        if not status:
+            # Check if task might have completed and been cleaned up
+            return {
+                "state": "NOT_FOUND",
+                "status": "Task not found - may have completed or expired",
+                "progress_percent": 0
+            }
+        return status
+    except Exception as e:
+        # Return a safe response even if Redis is down
+        return {
+            "state": "ERROR",
+            "status": "Unable to check task status",
+            "error": str(e),
+            "progress_percent": 0
+        }
 
 
 @app.post("/api/cancel-upload/{task_id}", tags=["CSV Import"])
@@ -409,13 +422,13 @@ async def _process_csv_async(task_id: str, csv_content: str):
         rows = list(csv_reader)
         total_rows = len(rows)
         
-        # Initialize progress
+        # Initialize progress with longer timeout for large files
         RedisCache.set(f"task:{task_id}", {
             "state": "PROGRESS",
             "current": 0,
             "total": total_rows,
             "status": "Starting optimized CSV processing..."
-        }, 3600)
+        }, 7200)  # 2 hours for large files
         
         # Process in very large chunks for maximum performance
         chunk_size = 15000
@@ -504,7 +517,7 @@ async def _process_csv_async(task_id: str, csv_content: str):
             db.commit()
             imported_count += len(valid_products)
             
-            # Update progress
+            # Update progress with extended timeout
             progress_percent = int(chunk_end / total_rows * 100)
             RedisCache.set(f"task:{task_id}", {
                 "state": "PROGRESS",
@@ -512,7 +525,7 @@ async def _process_csv_async(task_id: str, csv_content: str):
                 "total": total_rows,
                 "progress_percent": progress_percent,
                 "status": f"Processed {chunk_end} of {total_rows} records ({progress_percent}%) - {len(new_products)} new, {len(update_products)} updated"
-            }, 3600)
+            }, 7200)  # 2 hours
             
             # Clear cache and yield control
             _clear_products_cache()
@@ -526,14 +539,14 @@ async def _process_csv_async(task_id: str, csv_content: str):
             "progress_percent": 100,
             "status": f"Import completed! Processed {imported_count} products in optimized mode.",
             "imported_count": imported_count
-        }, 3600)
+        }, 7200)
         
     except Exception as e:
         RedisCache.set(f"task:{task_id}", {
             "state": "FAILURE",
             "status": f"Import failed: {str(e)}",
             "error": str(e)
-        }, 3600)
+        }, 7200)
     
     finally:
         db.close()
