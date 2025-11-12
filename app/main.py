@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from typing import List, Optional
 import os
 import csv
@@ -427,12 +427,11 @@ async def _process_csv_async(task_id: str, csv_content: str):
             if not valid_products:
                 continue
             
-            # Bulk check existing SKUs
+            # Bulk check existing SKUs using ORM for compatibility
             existing_skus = set(
-                row[0] for row in db.execute(
-                    "SELECT UPPER(sku) FROM products WHERE UPPER(sku) = ANY(:skus)",
-                    {"skus": skus_to_check}
-                ).fetchall()
+                p.sku.upper() for p in db.query(Product).filter(
+                    func.upper(Product.sku).in_([sku.upper() for sku in skus_to_check])
+                ).all()
             )
             
             # Separate new vs existing products
@@ -445,21 +444,29 @@ async def _process_csv_async(task_id: str, csv_content: str):
                 else:
                     new_products.append(product)
             
-            # Bulk insert new products
+            # Bulk insert new products using ORM
             if new_products:
-                db.execute(
-                    "INSERT INTO products (name, sku, description, active, created_at) VALUES " +
-                    ",".join(["(:name_%d, :sku_%d, :description_%d, true, NOW())" % (i, i, i) for i in range(len(new_products))]),
-                    {f"{key}_{i}": product[key] for i, product in enumerate(new_products) for key in ['name', 'sku', 'description']}
-                )
+                product_objects = [
+                    Product(
+                        name=p['name'],
+                        sku=p['sku'],
+                        description=p['description'],
+                        active=True,
+                        created_at=datetime.utcnow()
+                    ) for p in new_products
+                ]
+                db.add_all(product_objects)
             
             # Bulk update existing products
             if update_products:
-                for product in update_products:
-                    db.execute(
-                        "UPDATE products SET name = :name, description = :description, updated_at = NOW() WHERE UPPER(sku) = :sku",
-                        product
-                    )
+                for product_data in update_products:
+                    db.query(Product).filter(
+                        func.upper(Product.sku) == product_data['sku']
+                    ).update({
+                        'name': product_data['name'],
+                        'description': product_data['description'],
+                        'updated_at': datetime.utcnow()
+                    })
             
             db.commit()
             imported_count += len(valid_products)
