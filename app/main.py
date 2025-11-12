@@ -407,9 +407,10 @@ async def _process_csv_async(task_id: str, csv_content: str):
             chunk_end = min(chunk_start + chunk_size, total_rows)
             chunk = rows[chunk_start:chunk_end]
             
-            # Prepare bulk data
+            # Prepare bulk data with deduplication within chunk
             valid_products = []
             skus_to_check = []
+            seen_skus = set()  # Track SKUs within this chunk
             
             for row in chunk:
                 name = row.get('name', '').strip()
@@ -417,12 +418,16 @@ async def _process_csv_async(task_id: str, csv_content: str):
                 description = row.get('description', '').strip()
                 
                 if name and sku:
-                    valid_products.append({
-                        'name': name,
-                        'sku': sku.upper(),  # Normalize for deduplication
-                        'description': description
-                    })
-                    skus_to_check.append(sku.upper())
+                    sku_upper = sku.upper()
+                    # Skip if we've already seen this SKU in this chunk
+                    if sku_upper not in seen_skus:
+                        valid_products.append({
+                            'name': name,
+                            'sku': sku_upper,
+                            'description': description
+                        })
+                        skus_to_check.append(sku_upper)
+                        seen_skus.add(sku_upper)
             
             if not valid_products:
                 continue
