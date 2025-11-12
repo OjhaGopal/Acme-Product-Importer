@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 # Redis connection
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+print(f"Using REDIS_URL: {redis_url[:50]}..." if redis_url else "No REDIS_URL found")
 redis_client = redis.from_url(redis_url, decode_responses=True)
 
 class RedisCache:
