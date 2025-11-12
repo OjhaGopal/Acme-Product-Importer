@@ -3,9 +3,9 @@ import json
 import os
 from typing import Any, Optional
 
-# Redis connection
-redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-print(f"Using REDIS_URL: {redis_url[:50]}..." if redis_url else "No REDIS_URL found")
+# Redis connection - Railway uses REDIS_PUBLIC_URL
+redis_url = os.getenv("REDIS_PUBLIC_URL") or os.getenv("REDIS_URL", "redis://localhost:6379/0")
+print(f"Using Redis URL: {redis_url[:50]}..." if redis_url else "No Redis URL found")
 redis_client = redis.from_url(redis_url, decode_responses=True)
 
 class RedisCache:

@@ -3,13 +3,13 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-# Get database URL from environment (Railway sets this automatically)
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Get database URL from environment - Railway uses DATABASE_PUBLIC_URL
+DATABASE_URL = os.getenv("DATABASE_PUBLIC_URL") or os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     # Fallback for local development
     DATABASE_URL = "postgresql://postgres:password@localhost:5432/acme_products"
 
-print(f"Using DATABASE_URL: {DATABASE_URL[:50]}..." if DATABASE_URL else "No DATABASE_URL found")
+print(f"Using Database URL: {DATABASE_URL[:50]}..." if DATABASE_URL else "No Database URL found")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
