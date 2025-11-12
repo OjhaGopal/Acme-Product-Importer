@@ -10,17 +10,24 @@
                 <h3>Upload Product CSV</h3>
             </div>
             <div class="card-body">
-                <form id="uploadForm" enctype="multipart/form-data">
-                    <div class="mb-3">
-                        <label for="csvFile" class="form-label">Select CSV File</label>
-                        <input type="file" class="form-control" id="csvFile" accept=".csv" required>
-                        <div class="form-text">Upload a CSV file with columns: name, sku, description</div>
-                    </div>
-                    <button type="submit" class="btn btn-primary">Upload and Process</button>
-                </form>
+                <div id="uploadSection">
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="csvFile" class="form-label">Select CSV File</label>
+                            <input type="file" class="form-control" id="csvFile" accept=".csv" required>
+                            <div class="form-text">Upload a CSV file with columns: name, sku, description</div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Upload and Process</button>
+                    </form>
+                </div>
 
-                <div id="uploadProgress" class="mt-4" style="display: none;">
-                    <h5>Upload Progress</h5>
+                <div id="progressSection" class="mt-4" style="display: none;">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5>Upload Progress</h5>
+                        <button id="cancelUploadBtn" class="btn btn-outline-danger btn-sm" onclick="cancelUpload()" style="display: none;">
+                            <i class="fas fa-times"></i> Cancel Upload
+                        </button>
+                    </div>
                     <div class="progress mb-2">
                         <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%"></div>
                     </div>
@@ -73,7 +80,11 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
         const result = await response.json();
 
         if (response.ok) {
-            pollTaskStatus(result.task_id);
+            storeUploadTask(result.task_id);
+            document.getElementById('uploadSection').style.display = 'none';
+            document.getElementById('progressSection').style.display = 'block';
+            document.getElementById('cancelUploadBtn').style.display = 'inline-block';
+            pollProgress(result.task_id);
         } else {
             showResult('danger', result.detail || 'Upload failed');
         }
@@ -84,28 +95,40 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
 
 
 
-function pollTaskStatus(taskId) {
+function pollProgress(taskId) {
     const interval = setInterval(async () => {
         try {
             const response = await fetch(`/api/task-status/${taskId}`);
             const status = await response.json();
 
             if (status.state === 'PROGRESS') {
-                const percent = Math.round((status.current / status.total) * 100);
+                const percent = status.progress_percent || Math.round((status.current / status.total) * 100);
                 document.getElementById('progressBar').style.width = percent + '%';
                 document.getElementById('progressText').textContent = status.status;
             } else if (status.state === 'SUCCESS') {
                 clearInterval(interval);
+                clearUploadTask();
                 document.getElementById('progressBar').style.width = '100%';
                 document.getElementById('progressText').textContent = status.status;
+                document.getElementById('cancelUploadBtn').style.display = 'none';
                 showResult('success', status.status);
                 loadRecentJobs();
             } else if (status.state === 'FAILURE') {
                 clearInterval(interval);
+                clearUploadTask();
+                document.getElementById('cancelUploadBtn').style.display = 'none';
                 showResult('danger', 'Import failed: ' + status.status);
+            } else if (status.state === 'CANCELLED') {
+                clearInterval(interval);
+                clearUploadTask();
+                document.getElementById('cancelUploadBtn').style.display = 'none';
+                document.getElementById('uploadSection').style.display = 'block';
+                document.getElementById('progressSection').style.display = 'none';
+                showResult('warning', 'Upload was cancelled');
             }
         } catch (error) {
             clearInterval(interval);
+            clearUploadTask();
             showResult('danger', 'Error checking status: ' + error.message);
         }
     }, 1000);

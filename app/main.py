@@ -322,6 +322,24 @@ def get_task_status(task_id: str):
     return status
 
 
+@app.post("/api/cancel-upload/{task_id}", tags=["CSV Import"])
+def cancel_upload(task_id: str):
+    """
+    Cancel an ongoing CSV upload process
+    """
+    # Set cancellation flag
+    RedisCache.set(f"cancel:{task_id}", True, 3600)
+    
+    # Update task status to cancelled
+    RedisCache.set(f"task:{task_id}", {
+        "state": "CANCELLED",
+        "status": "Upload cancelled by user",
+        "progress_percent": 0
+    }, 3600)
+    
+    return {"message": "Upload cancellation requested"}
+
+
 # ============================================================================
 # WEBHOOK ENDPOINTS - STORY 4: Webhook Management
 # ============================================================================
@@ -399,11 +417,21 @@ async def _process_csv_async(task_id: str, csv_content: str):
             "status": "Starting optimized CSV processing..."
         }, 3600)
         
-        # Process in large chunks for maximum performance
-        chunk_size = 1000
+        # Process in very large chunks for maximum performance
+        chunk_size = 15000
         imported_count = 0
         
         for chunk_start in range(0, total_rows, chunk_size):
+            # Check for cancellation
+            if RedisCache.get(f"cancel:{task_id}"):
+                RedisCache.set(f"task:{task_id}", {
+                    "state": "CANCELLED",
+                    "status": "Upload cancelled by user",
+                    "current": chunk_start,
+                    "total": total_rows
+                }, 3600)
+                return
+            
             chunk_end = min(chunk_start + chunk_size, total_rows)
             chunk = rows[chunk_start:chunk_end]
             
