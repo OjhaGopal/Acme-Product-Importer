@@ -147,8 +147,13 @@ function pollProgress(taskId) {
             
             if (pollRetryCount >= maxRetries) {
                 clearInterval(interval);
-                clearUploadTask();
-                showResult('danger', 'Connection lost. Upload may still be processing on server.');
+                // Don't clear upload task - keep it for manual checking
+                document.getElementById('cancelUploadBtn').style.display = 'none';
+                document.getElementById('progressText').innerHTML = `
+                    Connection lost. Upload may still be processing on server.<br>
+                    <button class="btn btn-sm btn-outline-primary mt-2" onclick="location.reload()">Refresh to Check Status</button>
+                `;
+                showResult('warning', 'Connection lost. Please refresh the page to check if upload completed.');
             } else {
                 // Show temporary connection issue message
                 document.getElementById('progressText').textContent = `Connection issue (retry ${pollRetryCount}/${maxRetries})...`;

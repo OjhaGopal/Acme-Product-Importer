@@ -101,6 +101,31 @@ def status():
     }
 
 
+@app.get("/api/upload-status", tags=["CSV Import"])
+def check_upload_status():
+    """Check if there are any active uploads (fallback when Redis fails)"""
+    try:
+        # Try to get Redis status
+        from app.redis_client import redis_client
+        keys = list(redis_client.scan_iter(match="task:*"))
+        active_tasks = []
+        for key in keys[:5]:  # Limit to 5 recent tasks
+            task_data = RedisCache.get(key)
+            if task_data and task_data.get('state') == 'PROGRESS':
+                active_tasks.append({
+                    'task_id': key.replace('task:', ''),
+                    'status': task_data.get('status', 'Processing...'),
+                    'progress': task_data.get('progress_percent', 0)
+                })
+        return {'active_tasks': active_tasks, 'redis_available': True}
+    except Exception as e:
+        return {
+            'active_tasks': [],
+            'redis_available': False,
+            'message': 'Redis unavailable - cannot track upload progress'
+        }
+
+
 @app.get("/health", tags=["Monitoring"])
 def health_check():
     """
@@ -338,18 +363,20 @@ def get_task_status(task_id: str):
         if not status:
             # Check if task might have completed and been cleaned up
             return {
-                "state": "NOT_FOUND",
-                "status": "Task not found - may have completed or expired",
-                "progress_percent": 0
+                "state": "UNKNOWN",
+                "status": "Task status unavailable - upload may have completed",
+                "progress_percent": 100,
+                "message": "Please check the products page to see if your data was imported"
             }
         return status
     except Exception as e:
-        # Return a safe response even if Redis is down
+        # Return a helpful response when Redis is down
         return {
-            "state": "ERROR",
-            "status": "Unable to check task status",
-            "error": str(e),
-            "progress_percent": 0
+            "state": "REDIS_ERROR",
+            "status": "Cannot track progress - Redis connection failed",
+            "error": "Progress tracking unavailable",
+            "progress_percent": 50,
+            "message": "Upload may still be processing. Check products page for imported data."
         }
 
 
