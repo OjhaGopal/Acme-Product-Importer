@@ -374,44 +374,40 @@ async def upload_csv(file: UploadFile = File(...)):
 
 
 @app.get("/api/task-status/{task_id}", tags=["CSV Import"])
-def get_task_status(task_id: str):
+def get_task_status(task_id: str, db: Session = Depends(get_db)):
     """
-    STORY 1A: Get Celery task progress
+    STORY 1A: Get task progress from Redis
     Returns current status, progress, and completion percentage
     """
     try:
-        from app.celery_app import celery_app
-        task = celery_app.AsyncResult(task_id)
-        
-        if task.state == 'PENDING':
-            return {
-                "state": "PENDING",
-                "status": "Task is waiting to be processed",
-                "progress_percent": 0
-            }
-        elif task.state == 'PROGRESS':
-            return {
-                "state": "PROGRESS",
-                "current": task.info.get('current', 0),
-                "total": task.info.get('total', 1),
-                "progress_percent": task.info.get('progress_percent', 0),
-                "status": task.info.get('status', 'Processing...')
-            }
-        elif task.state == 'SUCCESS':
-            return {
-                "state": "SUCCESS",
-                "current": task.info.get('total', 0),
-                "total": task.info.get('total', 0),
-                "progress_percent": 100,
-                "status": task.info.get('status', 'Completed successfully'),
-                "imported_count": task.info.get('imported_count', 0)
-            }
+        # Get status from Redis
+        status = RedisCache.get(f"task:{task_id}")
+        if status:
+            # Update job record in database
+            job = db.query(ImportJob).filter(ImportJob.id == task_id).first()
+            if job:
+                job.status = status.get('state', 'PROGRESS')
+                job.records_processed = status.get('current', 0)
+                job.total_records = status.get('total', 0)
+                db.commit()
+            return status
         else:
-            return {
-                "state": task.state,
-                "status": str(task.info),
-                "progress_percent": 0
-            }
+            # Check database for job info
+            job = db.query(ImportJob).filter(ImportJob.id == task_id).first()
+            if job:
+                return {
+                    "state": job.status,
+                    "current": job.records_processed,
+                    "total": job.total_records,
+                    "progress_percent": int((job.records_processed / job.total_records * 100)) if job.total_records > 0 else 0,
+                    "status": f"Processed {job.records_processed} of {job.total_records} records"
+                }
+            else:
+                return {
+                    "state": "NOT_FOUND",
+                    "status": "Task not found",
+                    "progress_percent": 0
+                }
     except Exception as e:
         return {
             "state": "ERROR",
@@ -503,6 +499,13 @@ async def _process_csv_async(task_id: str, csv_content: str):
         rows = list(csv_reader)
         total_rows = len(rows)
         
+        # Update job record with total rows
+        job = db.query(ImportJob).filter(ImportJob.id == task_id).first()
+        if job:
+            job.total_records = total_rows
+            job.status = "PROGRESS"
+            db.commit()
+        
         # Initialize progress with longer timeout for large files
         RedisCache.set(f"task:{task_id}", {
             "state": "PROGRESS",
@@ -592,6 +595,13 @@ async def _process_csv_async(task_id: str, csv_content: str):
             _clear_products_cache()
             await asyncio.sleep(0.001)  # Minimal yield
         
+        # Update job as completed
+        job = db.query(ImportJob).filter(ImportJob.id == task_id).first()
+        if job:
+            job.status = "SUCCESS"
+            job.records_processed = imported_count
+            db.commit()
+        
         # Mark as completed
         RedisCache.set(f"task:{task_id}", {
             "state": "SUCCESS",
@@ -603,6 +613,12 @@ async def _process_csv_async(task_id: str, csv_content: str):
         }, 7200)
         
     except Exception as e:
+        # Update job as failed
+        job = db.query(ImportJob).filter(ImportJob.id == task_id).first()
+        if job:
+            job.status = "FAILURE"
+            db.commit()
+        
         RedisCache.set(f"task:{task_id}", {
             "state": "FAILURE",
             "status": f"Import failed: {str(e)}",
