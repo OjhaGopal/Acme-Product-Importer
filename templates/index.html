@@ -95,26 +95,16 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
 
 
 
-let pollRetryCount = 0;
-const maxRetries = 5;
-
 function pollProgress(taskId) {
+    let pollCount = 0;
+    const maxPolls = 20; // Stop after 20 attempts (100 seconds)
+    
     const interval = setInterval(async () => {
+        pollCount++;
+        
         try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-            
-            const response = await fetch(`/api/task-status/${taskId}`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            
+            const response = await fetch(`/api/task-status/${taskId}`);
             const status = await response.json();
-            pollRetryCount = 0; // Reset retry count on success
 
             if (status.state === 'PROGRESS') {
                 const percent = status.progress_percent || Math.round((status.current / status.total) * 100);
@@ -140,26 +130,62 @@ function pollProgress(taskId) {
                 document.getElementById('uploadSection').style.display = 'block';
                 document.getElementById('progressSection').style.display = 'none';
                 showResult('warning', 'Upload was cancelled');
+            } else {
+                // Unknown state - assume processing
+                document.getElementById('progressText').textContent = 'Processing... (status unavailable)';
             }
         } catch (error) {
-            pollRetryCount++;
-            console.warn(`Poll attempt ${pollRetryCount} failed:`, error.message);
+            console.warn('Status check failed:', error.message);
             
-            if (pollRetryCount >= maxRetries) {
+            if (pollCount >= maxPolls) {
                 clearInterval(interval);
-                // Don't clear upload task - keep it for manual checking
+                clearUploadTask();
                 document.getElementById('cancelUploadBtn').style.display = 'none';
                 document.getElementById('progressText').innerHTML = `
-                    Connection lost. Upload may still be processing on server.<br>
-                    <button class="btn btn-sm btn-outline-primary mt-2" onclick="location.reload()">Refresh to Check Status</button>
+                    Upload processing on server. <br>
+                    <button class="btn btn-sm btn-outline-primary mt-2" onclick="checkProducts()">Check Products Page</button>
+                    <button class="btn btn-sm btn-outline-success mt-2 ms-2" onclick="quickStatusCheck('${taskId}')">Quick Check</button>
                 `;
-                showResult('warning', 'Connection lost. Please refresh the page to check if upload completed.');
+                showResult('info', 'Upload is processing on server. Check the products page to see imported data.');
             } else {
-                // Show temporary connection issue message
-                document.getElementById('progressText').textContent = `Connection issue (retry ${pollRetryCount}/${maxRetries})...`;
+                document.getElementById('progressText').textContent = `Processing... (checking status ${pollCount}/${maxPolls})`;
             }
         }
-    }, 5000); // Increased to 5 seconds to reduce Redis load
+    }, 5000);
+}
+
+function checkProducts() {
+    window.location.href = '/products';
+}
+
+function quickStatusCheck(taskId) {
+    document.getElementById('progressText').textContent = 'Checking status...';
+    
+    fetch(`/api/task-status/${taskId}`)
+    .then(response => response.json())
+    .then(status => {
+        if (status.state === 'SUCCESS') {
+            clearUploadTask();
+            document.getElementById('progressBar').style.width = '100%';
+            document.getElementById('cancelUploadBtn').style.display = 'none';
+            showResult('success', 'Upload completed successfully!');
+            document.getElementById('progressText').textContent = 'Upload completed!';
+        } else if (status.state === 'PROGRESS') {
+            // Resume polling
+            pollProgress(taskId);
+        } else {
+            document.getElementById('progressText').innerHTML = `
+                Status: ${status.status || 'Processing on server'}<br>
+                <button class="btn btn-sm btn-outline-primary mt-2" onclick="checkProducts()">Check Products Page</button>
+            `;
+        }
+    })
+    .catch(error => {
+        document.getElementById('progressText').innerHTML = `
+            Cannot check status. Upload may be complete.<br>
+            <button class="btn btn-sm btn-outline-primary mt-2" onclick="checkProducts()">Check Products Page</button>
+        `;
+    });
 }
 
 function showResult(type, message) {
