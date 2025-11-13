@@ -20,7 +20,7 @@ import csv
 import io
 import uuid
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from app.database import get_db, engine
 from app.models import Product, Webhook, ImportJob, Base
@@ -112,7 +112,7 @@ def get_recent_jobs(db: Session = Depends(get_db)):
         "records_processed": job.records_processed,
         "total_records": job.total_records,
         "active": job.active,
-        "created_at": job.created_at.strftime("%Y-%m-%d %H:%M:%S") if job.created_at else None
+        "created_at": job.created_at.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d %H:%M:%S IST") if job.created_at else None
     } for job in jobs]
 
 
@@ -606,8 +606,7 @@ async def _process_csv_async(task_id: str, csv_content: str):
                     db.execute(text(sql))
                     db.commit()
             imported_count += len(valid_products)
-            new_products = []  # For progress display
-            update_products = []  # For progress display
+            # Progress tracking variables removed since counts were always 0
             
             # Update progress less frequently to reduce Redis load
             progress_percent = int(chunk_end / total_rows * 100)
@@ -618,7 +617,7 @@ async def _process_csv_async(task_id: str, csv_content: str):
                     "current": chunk_end,
                     "total": total_rows,
                     "progress_percent": progress_percent,
-                    "status": f"Processed {chunk_end} of {total_rows} records ({progress_percent}%) - {len(new_products)} new, {len(update_products)} updated"
+                    "status": f"Processed {chunk_end} of {total_rows} records ({progress_percent}%)"
                 }, 7200)  # 2 hours
             
             # Clear cache and yield control

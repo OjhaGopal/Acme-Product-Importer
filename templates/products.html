@@ -169,11 +169,11 @@ function displayProducts(products) {
         <table class="table table-striped">
             <thead>
                 <tr>
-                    <th style="width: 25%">Name</th>
+                    <th style="width: 20%">Name</th>
                     <th style="width: 15%">SKU</th>
                     <th style="width: 30%">Description</th>
                     <th style="width: 10%">Status</th>
-                    <th style="width: 20%">Actions</th>
+                    <th style="width: 25%">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -188,17 +188,16 @@ function displayProducts(products) {
                             </span>
                         </td>
                         <td>
-                            <div class="btn-group btn-group-sm" role="group">
-                                <button class="btn btn-outline-${product.active ? 'warning' : 'success'}" 
-                                        onclick="toggleProductStatus(${product.id})" 
-                                        title="${product.active ? 'Deactivate' : 'Activate'}">
-                                    <i class="fas fa-${product.active ? 'pause' : 'play'}"></i>
+                            <div class="d-flex gap-1" role="group">
+                                <button class="btn btn-sm btn-outline-${product.active ? 'warning' : 'success'}" 
+                                        onclick="toggleProductStatus(${product.id})">
+                                    <i class="fas fa-${product.active ? 'pause' : 'play'}"></i> ${product.active ? 'Deactivate' : 'Activate'}
                                 </button>
-                                <button class="btn btn-outline-primary" onclick="editProduct(${product.id})" title="Edit">
-                                    <i class="fas fa-edit"></i>
+                                <button class="btn btn-sm btn-outline-primary" onclick="editProduct(${product.id})">
+                                    <i class="fas fa-edit"></i> Edit
                                 </button>
-                                <button class="btn btn-outline-danger" onclick="deleteProduct(${product.id})" title="Delete">
-                                    <i class="fas fa-trash"></i>
+                                <button class="btn btn-sm btn-outline-danger" onclick="deleteProduct(${product.id})">
+                                    <i class="fas fa-trash"></i> Delete
                                 </button>
                             </div>
                         </td>
