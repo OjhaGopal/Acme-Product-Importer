@@ -54,3 +54,22 @@ class Webhook(Base):
     
     def __repr__(self):
         return f"<Webhook(id={self.id}, url='{self.url}', event_type='{self.event_type}')>"
+
+
+class ImportJob(Base):
+    """
+    Import job model for tracking CSV upload jobs
+    """
+    __tablename__ = "import_jobs"
+
+    id = Column(String(50), primary_key=True, doc="Task ID")
+    filename = Column(String(255), doc="Original filename")
+    status = Column(String(20), default="PENDING", doc="Job status")
+    records_processed = Column(Integer, default=0, doc="Number of records processed")
+    total_records = Column(Integer, default=0, doc="Total records in file")
+    active = Column(Boolean, default=True, doc="Job active status")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), doc="Creation timestamp")
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now(), doc="Last update timestamp")
+    
+    def __repr__(self):
+        return f"<ImportJob(id='{self.id}', status='{self.status}', records={self.records_processed})>"

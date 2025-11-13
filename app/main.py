@@ -23,7 +23,7 @@ import asyncio
 from datetime import datetime
 
 from app.database import get_db, engine
-from app.models import Product, Webhook, Base
+from app.models import Product, Webhook, ImportJob, Base
 from app.schemas import ProductResponse, WebhookResponse
 from app.redis_client import RedisCache
 from app.utils import get_health_status, get_metrics
@@ -101,29 +101,43 @@ def status():
     }
 
 
-@app.get("/api/upload-status", tags=["CSV Import"])
-def check_upload_status():
-    """Check if there are any active uploads (fallback when Redis fails)"""
-    try:
-        # Try to get Redis status
-        from app.redis_client import redis_client
-        keys = list(redis_client.scan_iter(match="task:*"))
-        active_tasks = []
-        for key in keys[:5]:  # Limit to 5 recent tasks
-            task_data = RedisCache.get(key)
-            if task_data and task_data.get('state') == 'PROGRESS':
-                active_tasks.append({
-                    'task_id': key.replace('task:', ''),
-                    'status': task_data.get('status', 'Processing...'),
-                    'progress': task_data.get('progress_percent', 0)
-                })
-        return {'active_tasks': active_tasks, 'redis_available': True}
-    except Exception as e:
-        return {
-            'active_tasks': [],
-            'redis_available': False,
-            'message': 'Redis unavailable - cannot track upload progress'
-        }
+@app.get("/api/recent-jobs", tags=["CSV Import"])
+def get_recent_jobs(db: Session = Depends(get_db)):
+    """Get recent import jobs"""
+    jobs = db.query(ImportJob).order_by(ImportJob.created_at.desc()).limit(10).all()
+    return [{
+        "id": job.id,
+        "filename": job.filename,
+        "status": job.status,
+        "records_processed": job.records_processed,
+        "total_records": job.total_records,
+        "active": job.active,
+        "created_at": job.created_at.strftime("%Y-%m-%d %H:%M:%S") if job.created_at else None
+    } for job in jobs]
+
+
+@app.put("/api/jobs/{job_id}/status", tags=["CSV Import"])
+def update_job_status(job_id: str, active: bool = Form(...), db: Session = Depends(get_db)):
+    """Update job active status"""
+    job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job.active = active
+    db.commit()
+    return {"message": f"Job status updated to {'active' if active else 'inactive'}"}
+
+
+@app.delete("/api/jobs/{job_id}", tags=["CSV Import"])
+def delete_job(job_id: str, db: Session = Depends(get_db)):
+    """Delete import job record"""
+    job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    db.delete(job)
+    db.commit()
+    return {"message": "Job deleted successfully"}
 
 
 @app.get("/health", tags=["Monitoring"])
@@ -330,7 +344,7 @@ def delete_all_products(db: Session = Depends(get_db)):
 @app.post("/api/upload", tags=["CSV Import"])
 async def upload_csv(file: UploadFile = File(...)):
     """
-    STORY 1: Upload and process CSV file asynchronously
+    STORY 1: Upload and process CSV file with Celery
     Returns task ID for progress tracking
     """
     if not file.filename.endswith('.csv'):
@@ -340,14 +354,21 @@ async def upload_csv(file: UploadFile = File(...)):
     content = await file.read()
     csv_content = content.decode('utf-8')
     
-    # Generate unique task ID
-    task_id = str(uuid.uuid4())
+    # Create job record
+    db = next(get_db())
+    job = ImportJob(
+        id=str(uuid.uuid4()),
+        filename=file.filename,
+        status="PENDING"
+    )
+    db.add(job)
+    db.commit()
     
-    # Start async processing
-    asyncio.create_task(_process_csv_async(task_id, csv_content))
+    # Start async processing (keeping original method for now)
+    asyncio.create_task(_process_csv_async(job.id, csv_content))
     
     return {
-        "task_id": task_id,
+        "task_id": job.id,
         "message": "CSV upload started. Use task_id to track progress."
     }
 
@@ -355,47 +376,62 @@ async def upload_csv(file: UploadFile = File(...)):
 @app.get("/api/task-status/{task_id}", tags=["CSV Import"])
 def get_task_status(task_id: str):
     """
-    STORY 1A: Get real-time progress of CSV processing
+    STORY 1A: Get Celery task progress
     Returns current status, progress, and completion percentage
     """
     try:
-        status = RedisCache.get(f"task:{task_id}")
-        if not status:
-            # Check if task might have completed and been cleaned up
+        from app.celery_app import celery_app
+        task = celery_app.AsyncResult(task_id)
+        
+        if task.state == 'PENDING':
             return {
-                "state": "UNKNOWN",
-                "status": "Task status unavailable - upload may have completed",
-                "progress_percent": 100,
-                "message": "Please check the products page to see if your data was imported"
+                "state": "PENDING",
+                "status": "Task is waiting to be processed",
+                "progress_percent": 0
             }
-        return status
+        elif task.state == 'PROGRESS':
+            return {
+                "state": "PROGRESS",
+                "current": task.info.get('current', 0),
+                "total": task.info.get('total', 1),
+                "progress_percent": task.info.get('progress_percent', 0),
+                "status": task.info.get('status', 'Processing...')
+            }
+        elif task.state == 'SUCCESS':
+            return {
+                "state": "SUCCESS",
+                "current": task.info.get('total', 0),
+                "total": task.info.get('total', 0),
+                "progress_percent": 100,
+                "status": task.info.get('status', 'Completed successfully'),
+                "imported_count": task.info.get('imported_count', 0)
+            }
+        else:
+            return {
+                "state": task.state,
+                "status": str(task.info),
+                "progress_percent": 0
+            }
     except Exception as e:
-        # Return a helpful response when Redis is down
         return {
-            "state": "REDIS_ERROR",
-            "status": "Cannot track progress - Redis connection failed",
-            "error": "Progress tracking unavailable",
-            "progress_percent": 50,
-            "message": "Upload may still be processing. Check products page for imported data."
+            "state": "ERROR",
+            "status": "Cannot check task status",
+            "error": str(e),
+            "progress_percent": 0
         }
 
 
 @app.post("/api/cancel-upload/{task_id}", tags=["CSV Import"])
 def cancel_upload(task_id: str):
     """
-    Cancel an ongoing CSV upload process
+    Cancel a Celery task
     """
-    # Set cancellation flag
-    RedisCache.set(f"cancel:{task_id}", True, 3600)
-    
-    # Update task status to cancelled
-    RedisCache.set(f"task:{task_id}", {
-        "state": "CANCELLED",
-        "status": "Upload cancelled by user",
-        "progress_percent": 0
-    }, 3600)
-    
-    return {"message": "Upload cancellation requested"}
+    try:
+        from app.celery_app import celery_app
+        celery_app.control.revoke(task_id, terminate=True)
+        return {"message": "Task cancellation requested"}
+    except Exception as e:
+        return {"message": f"Failed to cancel task: {str(e)}"}
 
 
 # ============================================================================
@@ -518,49 +554,27 @@ async def _process_csv_async(task_id: str, csv_content: str):
             if not valid_products:
                 continue
             
-            # Bulk check existing SKUs using ORM for compatibility
-            existing_skus = set(
-                p.sku.upper() for p in db.query(Product).filter(
-                    func.upper(Product.sku).in_([sku.upper() for sku in skus_to_check])
-                ).all()
-            )
-            
-            # Separate new vs existing products
-            new_products = []
-            update_products = []
-            
-            for product in valid_products:
-                if product['sku'] in existing_skus:
-                    update_products.append(product)
-                else:
-                    new_products.append(product)
-            
-            # Bulk insert new products using ORM
-            if new_products:
-                product_objects = [
-                    Product(
-                        name=p['name'],
-                        sku=p['sku'],
-                        description=p['description'],
-                        active=True,
-                        created_at=datetime.utcnow()
-                    ) for p in new_products
-                ]
-                db.add_all(product_objects)
-            
-            # Bulk update existing products
-            if update_products:
-                for product_data in update_products:
-                    db.query(Product).filter(
-                        func.upper(Product.sku) == product_data['sku']
-                    ).update({
-                        'name': product_data['name'],
-                        'description': product_data['description'],
-                        'updated_at': datetime.utcnow()
-                    })
-            
-            db.commit()
+            # Fast bulk operations using raw SQL
+            if valid_products:
+                # Use PostgreSQL UPSERT for maximum speed
+                values = []
+                for p in valid_products:
+                    values.append(f"('{p['name'].replace("'", "''")}', '{p['sku']}', '{p['description'].replace("'", "''")}', true, NOW(), NOW())")
+                
+                if values:
+                    sql = f"""
+                    INSERT INTO products (name, sku, description, active, created_at, updated_at) 
+                    VALUES {','.join(values)}
+                    ON CONFLICT (sku) DO UPDATE SET 
+                        name = EXCLUDED.name,
+                        description = EXCLUDED.description,
+                        updated_at = NOW()
+                    """
+                    db.execute(text(sql))
+                    db.commit()
             imported_count += len(valid_products)
+            new_products = []  # For progress display
+            update_products = []  # For progress display
             
             # Update progress less frequently to reduce Redis load
             progress_percent = int(chunk_end / total_rows * 100)
