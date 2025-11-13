@@ -159,7 +159,7 @@ function pollProgress(taskId) {
                 document.getElementById('progressText').textContent = `Connection issue (retry ${pollRetryCount}/${maxRetries})...`;
             }
         }
-    }, 2000); // Increased to 2 seconds for better stability
+    }, 5000); // Increased to 5 seconds to reduce Redis load
 }
 
 function showResult(type, message) {

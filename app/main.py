@@ -475,8 +475,8 @@ async def _process_csv_async(task_id: str, csv_content: str):
             "status": "Starting optimized CSV processing..."
         }, 7200)  # 2 hours for large files
         
-        # Process in very large chunks for maximum performance
-        chunk_size = 15000
+        # Process in chunks for reliable performance
+        chunk_size = 1000
         imported_count = 0
         
         for chunk_start in range(0, total_rows, chunk_size):
@@ -562,15 +562,17 @@ async def _process_csv_async(task_id: str, csv_content: str):
             db.commit()
             imported_count += len(valid_products)
             
-            # Update progress with extended timeout
+            # Update progress less frequently to reduce Redis load
             progress_percent = int(chunk_end / total_rows * 100)
-            RedisCache.set(f"task:{task_id}", {
-                "state": "PROGRESS",
-                "current": chunk_end,
-                "total": total_rows,
-                "progress_percent": progress_percent,
-                "status": f"Processed {chunk_end} of {total_rows} records ({progress_percent}%) - {len(new_products)} new, {len(update_products)} updated"
-            }, 7200)  # 2 hours
+            # Only update Redis every 5 chunks (5000 records) or at completion
+            if chunk_start % 5000 == 0 or chunk_end == total_rows:
+                RedisCache.set(f"task:{task_id}", {
+                    "state": "PROGRESS",
+                    "current": chunk_end,
+                    "total": total_rows,
+                    "progress_percent": progress_percent,
+                    "status": f"Processed {chunk_end} of {total_rows} records ({progress_percent}%) - {len(new_products)} new, {len(update_products)} updated"
+                }, 7200)  # 2 hours
             
             # Clear cache and yield control
             _clear_products_cache()
