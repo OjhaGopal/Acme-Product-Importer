@@ -27,6 +27,15 @@
     </div>
 </div>
 
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="alert alert-info d-flex justify-content-between align-items-center">
+            <span id="productCount">Loading product count...</span>
+            <small class="text-muted">Total products in database</small>
+        </div>
+    </div>
+</div>
+
 <div class="card">
     <div class="card-body">
         <div id="productsTable">Loading products...</div>
@@ -143,6 +152,7 @@ async function loadProducts(page = 0) {
 
         displayProducts(products);
         displayPagination(countData.count, page);
+        updateProductCount(countData.count, search, status);
         currentPage = page;
     } catch (error) {
         document.getElementById('productsTable').innerHTML = '<p class="text-danger">Error loading products</p>';
@@ -159,11 +169,11 @@ function displayProducts(products) {
         <table class="table table-striped">
             <thead>
                 <tr>
-                    <th>Name</th>
-                    <th>SKU</th>
-                    <th>Description</th>
-                    <th>Status</th>
-                    <th>Actions</th>
+                    <th style="width: 25%">Name</th>
+                    <th style="width: 15%">SKU</th>
+                    <th style="width: 30%">Description</th>
+                    <th style="width: 10%">Status</th>
+                    <th style="width: 20%">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -171,15 +181,26 @@ function displayProducts(products) {
                     <tr>
                         <td>${product.name}</td>
                         <td>${product.sku}</td>
-                        <td>${product.description || ''}</td>
+                        <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${product.description || ''}">${product.description || ''}</td>
                         <td>
                             <span class="badge ${product.active ? 'bg-success' : 'bg-secondary'}">
                                 ${product.active ? 'Active' : 'Inactive'}
                             </span>
                         </td>
                         <td>
-                            <button class="btn btn-sm btn-outline-primary" onclick="editProduct(${product.id})">Edit</button>
-                            <button class="btn btn-sm btn-outline-danger" onclick="deleteProduct(${product.id})">Delete</button>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <button class="btn btn-outline-${product.active ? 'warning' : 'success'}" 
+                                        onclick="toggleProductStatus(${product.id})" 
+                                        title="${product.active ? 'Deactivate' : 'Activate'}">
+                                    <i class="fas fa-${product.active ? 'pause' : 'play'}"></i>
+                                </button>
+                                <button class="btn btn-outline-primary" onclick="editProduct(${product.id})" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="deleteProduct(${product.id})" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
                         </td>
                     </tr>
                 `).join('')}
@@ -335,6 +356,54 @@ document.getElementById('searchInput').addEventListener('keypress', function(e) 
         loadProducts(0);
     }
 });
+
+async function toggleProductStatus(id) {
+    try {
+        const response = await fetch(`/api/products/${id}/toggle-status`, {
+            method: 'PUT'
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            loadProducts(currentPage);
+            showToast(result.message, 'success');
+        } else {
+            showToast('Error updating product status', 'danger');
+        }
+    } catch (error) {
+        showToast('Error updating product status', 'danger');
+    }
+}
+
+function updateProductCount(count, search, status) {
+    let countText = `${count} products`;
+    
+    if (search || status) {
+        countText += ' (filtered)';
+    }
+    
+    if (search) {
+        countText += ` matching "${search}"`;
+    }
+    
+    if (status) {
+        countText += ` - ${status === 'true' ? 'Active' : 'Inactive'} only`;
+    }
+    
+    document.getElementById('productCount').textContent = countText;
+}
+
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `alert alert-${type} position-fixed`;
+    toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.remove();
+    }, 3000);
+}
 
 // Load products on page load
 loadProducts();

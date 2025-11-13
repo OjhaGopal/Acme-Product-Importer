@@ -308,6 +308,26 @@ def update_product(
     return product
 
 
+@app.put("/api/products/{product_id}/toggle-status", tags=["Products"])
+def toggle_product_status(product_id: int, db: Session = Depends(get_db)):
+    """Toggle product active status"""
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    product.active = not product.active
+    product.updated_at = datetime.utcnow()
+    db.commit()
+    
+    # Clear products cache
+    _clear_products_cache()
+    
+    return {
+        "message": f"Product {'activated' if product.active else 'deactivated'} successfully",
+        "active": product.active
+    }
+
+
 @app.delete("/api/products/{product_id}", tags=["Products"])
 def delete_product(product_id: int, db: Session = Depends(get_db)):
     """Delete a specific product"""
@@ -490,6 +510,14 @@ async def _process_csv_async(task_id: str, csv_content: str):
     """
     Optimized CSV processing with bulk operations and chunking
     10x faster than row-by-row processing
+    
+    DUPLICATION HANDLING:
+    1. Within CSV chunks: Uses seen_skus set to process only first occurrence
+    2. Database conflicts: PostgreSQL UPSERT (ON CONFLICT) automatically handles:
+       - If SKU exists: Updates name, description, updated_at
+       - If SKU new: Inserts as new product
+    3. Case-insensitive: All SKUs converted to uppercase for consistency
+    4. Atomic: Each chunk processed in single transaction
     """
     db = next(get_db())
     
@@ -535,7 +563,7 @@ async def _process_csv_async(task_id: str, csv_content: str):
             # Prepare bulk data with deduplication within chunk
             valid_products = []
             skus_to_check = []
-            seen_skus = set()  # Track SKUs within this chunk
+            seen_skus = set()  # DEDUPLICATION: Track SKUs within this chunk to avoid duplicates
             
             for row in chunk:
                 name = row.get('name', '').strip()
@@ -544,7 +572,7 @@ async def _process_csv_async(task_id: str, csv_content: str):
                 
                 if name and sku:
                     sku_upper = sku.upper()
-                    # Skip if we've already seen this SKU in this chunk
+                    # DEDUPLICATION: Skip if we've already seen this SKU in this chunk (first occurrence wins)
                     if sku_upper not in seen_skus:
                         valid_products.append({
                             'name': name,
@@ -565,6 +593,8 @@ async def _process_csv_async(task_id: str, csv_content: str):
                     values.append(f"('{p['name'].replace("'", "''")}', '{p['sku']}', '{p['description'].replace("'", "''")}', true, NOW(), NOW())")
                 
                 if values:
+                    # DEDUPLICATION: PostgreSQL UPSERT handles database-level duplicates
+                    # ON CONFLICT (sku) means: if SKU exists, update it; if new, insert it
                     sql = f"""
                     INSERT INTO products (name, sku, description, active, created_at, updated_at) 
                     VALUES {','.join(values)}
