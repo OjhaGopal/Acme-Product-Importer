@@ -20,6 +20,7 @@ import csv
 import io
 import uuid
 import asyncio
+import threading
 from datetime import datetime, timezone, timedelta
 
 from app.database import get_db, engine
@@ -384,8 +385,10 @@ async def upload_csv(file: UploadFile = File(...)):
     db.add(job)
     db.commit()
     
-    # Start async processing (keeping original method for now)
-    asyncio.create_task(_process_csv_async(job.id, csv_content))
+    # Start background processing in separate thread
+    thread = threading.Thread(target=_process_csv_background, args=(job.id, csv_content))
+    thread.daemon = True
+    thread.start()
     
     return {
         "task_id": job.id,
@@ -506,7 +509,7 @@ def test_webhook(webhook_id: int, db: Session = Depends(get_db)):
 # INTERNAL HELPER FUNCTIONS
 # ============================================================================
 
-async def _process_csv_async(task_id: str, csv_content: str):
+def _process_csv_background(task_id: str, csv_content: str):
     """
     Optimized CSV processing with bulk operations and chunking
     10x faster than row-by-row processing
@@ -620,9 +623,8 @@ async def _process_csv_async(task_id: str, csv_content: str):
                     "status": f"Processed {chunk_end} of {total_rows} records ({progress_percent}%)"
                 }, 7200)  # 2 hours
             
-            # Clear cache and yield control
+            # Clear cache
             _clear_products_cache()
-            await asyncio.sleep(0.001)  # Minimal yield
         
         # Update job as completed
         job = db.query(ImportJob).filter(ImportJob.id == task_id).first()
